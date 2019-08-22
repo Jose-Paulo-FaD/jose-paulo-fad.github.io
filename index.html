@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Simple Map</title>
+		<meta name="viewport" content="initial-scale=1.0">
+		<meta charset="utf-8">
+		<style>
+			ul {
+				list-style-type: none;
+				margin: 0;
+				padding: 0;
+				overflow: hidden;
+				background-color: #333;
+			}
+
+			li {
+				float: left;
+			}
+
+			li a {
+				display: block;
+				color: white;
+				text-align: center;
+				padding: 14px 16px;
+				text-decoration: none;
+				font-family: "Verdana";
+			}
+
+			li a.hoverable:hover {
+				background-color: #111;
+			}
+			
+			.maps {
+				width: 50%;
+				height: 100%;
+				float:left;
+			}
+			
+			.overlay {
+				position: fixed;
+				display: none;
+				width: 100%;
+				height: 100%;
+				top: 0; 
+				left: 0;
+				right: 0;
+				bottom: 0;
+				z-index: 2;
+				cursor: pointer;
+			}
+			
+			html, body {
+				height: 100%;
+				margin: 0;
+				padding: 0;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="menuBar" style="height: 8%;">
+			<ul>
+				<li><a class="hoverable" href="javascript:startNewGame();">New Game</a></li>
+				<li><a style="padding-right: 1px;">Round:</a></li>
+				<li><a id="currentRoundCounter"></a></li>
+				<li><a style="padding-left: 1px; padding-right: 1px;">/</a></li>
+				<li><a id="maxRoundCounter"></a></li>
+				<li><a style="padding-right: 1px;">Score:</a></li>
+				<li><a id="currentScoreCounter"></a></li>
+				<li><a style="padding-left: 1px; padding-right: 1px;">/</a></li>
+				<li><a id="maxScoreCounter"></a></li>
+			</ul>
+			<div style="width: 100%; height: 100%; background-color: #eeeeee;">
+				<div id="scoreBar" style="width: 0%; height: 100%; background-color: #00e600;"></div> 
+			</div>
+		</div>
+		<div style="height: 92%;">
+			<div class="maps" id="panorama"></div>
+			<div class="maps" id="map"></div>
+		</div>
+		<div class="overlay" id="endRoundOverlay" style="background-color: rgba(255, 255, 255, 0.1);" oncontextmenu="return false;" onclick="onEndRoundOverlayClicked();">
+		</div>
+		<div class="overlay" id="endGameOverlay" style="background-color: rgba(255, 255, 255, 0.5);" oncontextmenu="return false;" onclick="onEndGameOverlayClicked();">
+		</div>
+		<script>
+			var max_rounds = 3;
+			var max_score_per_round = 1000;
+			var zero_score_distance = 200; //km
+		
+			var search_around = {lat: -11.888818, lng: -53.901709};
+			var search_radius = 2000; //km
+			var max_attempts = 3;
+			
+			var guess_location;
+			var mistery_location;
+			var round;
+			var score;
+			
+			var map;
+			var panorama;
+			var sv;
+			var line;
+			
+			const lineSymbol = {
+				path: 'M 0,-1 0,1',
+				strokeOpacity: 1,
+				scale: 4
+			};
+			
+			function getRandomCoordinate(around, radius, fixed)
+			{
+				// .toFixed() returns string, so ' * 1' is a trick to convert to number
+				var lat = ((Math.random()*2 - 1)*radius/111 + around.lat).toFixed(fixed) * 1;
+				var lng = ((Math.random()*2 - 1)*radius/111 + around.lng).toFixed(fixed) * 1;
+				return {lat: lat, lng: lng}
+			}
+			
+			function getNewMisteryLocation(attempt)
+			{
+				if(attempt >= max_attempts)
+				{
+					return false;
+				}
+				
+				sv.getPanorama({location: getRandomCoordinate(search_around, search_radius, 6), radius: search_radius*1000, source: 'outdoor'}, function(data, status)
+				{
+					if(status === 'OK')
+					{
+						mistery_location = data.location.latLng;
+						
+						map.setCenter(data.location.latLng);
+						map.setZoom(15);
+						panorama.setPano(data.location.pano);
+						panorama.setPov({heading: 270, pitch: 0});
+					}
+					else
+					{
+						getNewMisteryLocation(attempt + 1);
+					}
+				});
+				
+				return true;
+			}
+	
+			function enableOverlay(name)
+			{
+				document.getElementById(name).style.display = "block";
+			}
+
+			function disableOverlay(name)
+			{
+				document.getElementById(name).style.display = "none";
+			}
+
+			function expandMap()
+			{
+				document.getElementById("panorama").style.display = "none";
+				document.getElementById("map").style.width = "100%";
+			}
+			
+			function contractMap()
+			{
+				document.getElementById("map").style.width = "50%"
+				document.getElementById("panorama").style.display = "block";
+			}
+
+			function setupGameVariables()
+			{
+				round = 1;
+				score = 0;
+				
+				document.getElementById("currentRoundCounter").innerHTML = round;
+				document.getElementById("maxRoundCounter").innerHTML = max_rounds;
+				document.getElementById("currentScoreCounter").innerHTML = score;
+				document.getElementById("maxScoreCounter").innerHTML = max_rounds*max_score_per_round;
+				document.getElementById("scoreBar").style.width = Math.round(100*score/(max_rounds*max_score_per_round)) + "%";
+			}
+			
+			function zoomToObject(obj)
+			{
+				var bounds = new google.maps.LatLngBounds();
+				var points = obj.getPath().getArray();
+				for (var n = 0; n < points.length ; n++){
+					bounds.extend(points[n]);
+				}
+				map.fitBounds(bounds);
+			}
+			
+			function createLine(from_location, to_location)
+			{
+				line = new google.maps.Polyline({
+					path: [from_location, to_location],
+					geodesic: true,
+					strokeOpacity: 0,
+					icons: [{
+						icon: lineSymbol,
+						offset: '0',
+						repeat: '20px'
+					}],
+					map: map
+				});
+			}
+			
+			function removeLine()
+			{
+				if(line == null)
+				{
+					return;
+				}
+				
+				line.setMap(null);
+				line = null;
+			}
+			
+			function startNewGame()
+			{
+				if(!getNewMisteryLocation(0))
+				{
+					alert("Could not start new game");
+					return;
+				}
+				
+				setupGameVariables();
+				removeLine();
+			}
+			
+			function startNewRound()
+			{
+				removeLine();
+				contractMap();
+			
+				if(!getNewMisteryLocation(0))
+				{
+					alert("Could not start new round");
+					return;
+				}
+				
+				round += 1;
+				document.getElementById("currentRoundCounter").innerHTML = round;
+			}
+			
+			function endRound()
+			{
+				createLine(guess_location, mistery_location);
+				zoomToObject(line);
+				expandMap();
+				enableOverlay("endRoundOverlay");
+				
+				var distance = google.maps.geometry.spherical.computeDistanceBetween(guess_location, mistery_location)/1000; //km
+				
+				score += Math.max(Math.round((zero_score_distance - distance)*(max_score_per_round/zero_score_distance)), 0);
+				document.getElementById("currentScoreCounter").innerHTML = score;
+				document.getElementById("scoreBar").style.width = Math.round(100*score/(max_rounds*max_score_per_round)) + "%";
+			}
+
+			function postInitMapsAPI()
+			{
+				sv = new google.maps.StreetViewService();
+			
+				map = new google.maps.Map(document.getElementById('map'),
+				{
+					center: {lat: 37.869260, lng: -122.254811},
+					zoom: 15,
+					disableDefaultUI: true
+				});
+
+				panorama = new google.maps.StreetViewPanorama(document.getElementById('panorama'),
+				{
+					position: {lat: 37.869260, lng: -122.254811},
+					pov: {heading: 0, pitch: 0},
+					zoom: 0,
+					disableDefaultUI: true,
+					showRoadLabels: false,
+					clickToGo: true
+				});
+
+				startNewGame();
+
+				map.addListener('rightclick', function(event)
+				{
+					guess_location = event.latLng;
+					endRound();
+				});
+			}
+			
+			function onEndRoundOverlayClicked()
+			{
+				disableOverlay("endRoundOverlay");
+				if(round == max_rounds)
+				{
+					enableOverlay("endGameOverlay");
+				}
+				else
+				{
+					startNewRound();
+				}
+			}
+			
+			function onEndGameOverlayClicked()
+			{
+				disableOverlay("endGameOverlay");
+				startNewGame();
+			}
+		</script>
+		<script 
+		src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAjH9mtZVcrFtsPuelWseO3WbmGN7cbIe8&callback=postInitMapsAPI" async defer>
+		</script>
+	</body>
+</html>
